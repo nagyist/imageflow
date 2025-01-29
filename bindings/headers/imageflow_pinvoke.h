@@ -60,7 +60,7 @@ bool imageflow_context_add_input_buffer(void *context,
                                         int32_t io_id,
                                         const uint8_t *buffer,
                                         size_t buffer_byte_count,
-                                        Lifetime lifetime);
+                                        enum Lifetime lifetime);
 
 //
 // Adds an output buffer to the job context.
@@ -264,8 +264,8 @@ bool imageflow_json_response_read(void *context,
                                   size_t *buffer_size_out);
 
 #ifdef __cplusplus
-} // extern "C"
-#endif // __cplusplus
+}  // extern "C"
+#endif  // __cplusplus
 
 
 #endif // generated_imageflow_h

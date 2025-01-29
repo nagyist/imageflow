@@ -1,9 +1,9 @@
 use std;
 use crate::for_other_imageflow_crates::preludes::external_without_std::*;
 use crate::ffi;
-use crate::{Context, CError,  Result, JsonResponse};
+use crate::{Context, Result, JsonResponse};
 use crate::ffi::{wrap_jpeg_get_custom_state, WrapJpegSourceManager};
-use crate::ffi::BitmapBgra;
+
 use imageflow_types::collections::AddRemoveSet;
 use crate::io::IoProxy;
 use uuid::Uuid;
@@ -18,7 +18,7 @@ use rgb::alt::BGRA8;
 use imageflow_helpers::preludes::from_std::ptr::{null, slice_from_raw_parts, null_mut};
 use mozjpeg_sys::c_void;
 use std::os::raw::c_char;
-use crate::graphics::bitmaps::{BitmapKey, ColorSpace, BitmapCompositing};
+use crate::graphics::bitmaps::{Bitmap, BitmapCompositing, BitmapKey, ColorSpace};
 
 pub struct LibPngDecoder{
     decoder: Box<PngDec>
@@ -87,14 +87,10 @@ impl Decoder for LibPngDecoder {
             BitmapCompositing::ReplaceSelf)
             .map_err(|e| e.at(here!()))?;
 
+        let mut bitmap  = bitmaps.try_borrow_mut(canvas_key)
+            .map_err(|e| e.at(here!()))?;
 
-        let mut canvas = unsafe { bitmaps.try_borrow_mut(canvas_key)
-            .map_err(|e| e.at(here!()))?
-            .get_window_u8().unwrap()
-            .to_bitmap_bgra().map_err(|e| e.at(here!()))?
-        };
-
-        self.decoder.read_frame(&mut canvas)?;
+        self.decoder.read_frame(&mut bitmap)?;
 
         Ok(canvas_key)
     }
@@ -133,6 +129,9 @@ impl PngDec{
     extern "C" fn png_decoder_error_handler(png_ptr: *mut c_void, custom_state: *mut c_void,
                                             message: *const c_char){
         let decoder = unsafe{ &mut *(custom_state as *mut PngDec) };
+        if custom_state.is_null() || decoder.c_state_disposed {
+            return;
+        }
 
         if decoder.error.is_none() {
             if !message.is_null(){
@@ -148,17 +147,39 @@ impl PngDec{
     #[no_mangle]
     extern "C" fn png_decoder_custom_read_function(png_ptr: *mut c_void, custom_state: *mut c_void, buffer: *mut u8, bytes_requested: usize, out_bytes_read: &mut usize) -> bool {
         let decoder = unsafe{ &mut *(custom_state as *mut PngDec) };
+        if custom_state.is_null() || decoder.c_state_disposed {
+            return false; // Nothing else we can do.
+        }
 
         let buffer_slice = unsafe{ std::slice::from_raw_parts_mut(buffer, bytes_requested) };
 
-        return match decoder.io.read_exact(buffer_slice) {
-            Ok(()) => {
-                *out_bytes_read = buffer_slice.len();
+        return match decoder.io.read_maximally(buffer_slice) {
+            Ok(read_total) => {
+                assert!(read_total <= bytes_requested);
+                *out_bytes_read = read_total;
                 true
             },
             Err(err) => {
-                decoder.error = Some(FlowError::from_decoder(err).at(here!()));
-                false
+                if err.kind() == ::std::io::ErrorKind::UnexpectedEof {
+                    let len = decoder.io.try_get_length();
+                    let pos = decoder.io.try_get_position();
+                    let remaining = if len.is_some() && pos.is_some() {
+                        Some(len.unwrap() as i64 - pos.unwrap() as i64)
+                    } else {
+                        None
+                    };
+                    let missing = remaining.map(|r| (bytes_requested as i64) - (r as i64));
+                    let err =
+                    FlowError::without_location(ErrorKind::DecodingIoError,
+                        format!("{:?} (failed to read requested {} bytes (only {:?} remain), pos={:?}, len={:?}, missing={:?})", err, bytes_requested, remaining, pos, len, missing)).at(here!());
+
+                    decoder.error = Some(err);
+
+                    false
+                } else {
+                    decoder.error = Some(FlowError::from_decoder(err).at(here!()));
+                    false
+                }
             }
         }
 
@@ -254,36 +275,38 @@ impl PngDec{
         Ok((self.w, self.h, self.pixel_format))
     }
 
-    fn read_frame(&mut self, canvas: *mut BitmapBgra) -> Result<()> {
+    fn read_frame(&mut self, canvas: &mut Bitmap) -> Result<()> {
         if self.c_state_disposed{
             return Err(nerror!(ErrorKind::InvalidOperation, "LibPNG decoder disposed before call to read_frame"))
         }
 
         self.read_header().map_err(|e| e.at(here!()))?;
 
-        unsafe {
-            if self.w != (*canvas).w || self.h != (*canvas).h {
-                return Err(nerror!(ErrorKind::InvalidArgument, "Canvas not sized for decoded image"));
-            }
+
+        if self.w != canvas.w() || self.h != canvas.h() {
+            return Err(nerror!(ErrorKind::InvalidArgument, "Canvas not sized for decoded image"));
         }
 
-        let mut row_pointers = unsafe{ (*canvas).get_row_pointers()
-            .map_err(|e| e.at(here!()))}?;
+
+        let mut window = canvas.get_window_u8().unwrap();
+
+
+        let mut row_pointers = window.create_row_pointers()
+            .map_err(|e| e.at(here!()))?;
 
 
         unsafe {
             let c_state = self.c_state.as_mut_ptr() as *mut c_void;
 
-            if !ffi::wrap_png_decode_finish(c_state, row_pointers.as_mut_ptr(), row_pointers.len(), (*canvas).fmt.bytes() * (*canvas).width()) {
+            if !ffi::wrap_png_decode_finish(c_state, row_pointers.rows.as_mut_ptr(), row_pointers.h, row_pointers.items_w) {
                 return Err(self.error.clone().expect("error missing").at(here!()));
             }
-
 
             let color_info = &*ffi::wrap_png_decoder_get_color_info(c_state);
 
             if !self.ignore_color_profile {
 
-                let result = ColorTransformCache::transform_to_srgb(&mut *canvas, color_info, PixelFormat::BGRA_8, PixelFormat::BGRA_8)
+                let result = ColorTransformCache::transform_to_srgb(&mut window, color_info, PixelFormat::BGRA_8, PixelFormat::BGRA_8)
                     .map_err(|e| e.at(here!()));
                 if result.is_err() && !self.ignore_color_profile_errors{
                     return result;
@@ -298,8 +321,13 @@ impl PngDec{
 
     fn dispose_codec(&mut self) -> Result<()>{
         let c_state = self.c_state.as_mut_ptr() as *mut c_void;
+        if c_state.is_null() || self.c_state_disposed {
+            return Ok(());
+        }
 
         unsafe {
+            // mutex?
+            self.c_state_disposed = true;
             if !ffi::wrap_png_decoder_destroy(c_state) {
                 Err(self.error.clone().expect("error missing").at(here!()))
             }else{

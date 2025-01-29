@@ -2,8 +2,8 @@ use std;
 use std::sync::*;
 use crate::for_other_imageflow_crates::preludes::external_without_std::*;
 use crate::ffi;
-use crate::{Context, CError, Result, JsonResponse, ErrorKind, FlowError, ErrorCategory};
-use crate::ffi::BitmapBgra;
+use crate::{Context, Result, JsonResponse, ErrorKind, FlowError, ErrorCategory};
+
 use crate::ffi::DecoderColorInfo;
 use crate::ffi::ColorProfileSource;
 use imageflow_types::collections::AddRemoveSet;

@@ -74,6 +74,7 @@ pub enum PixelFormat {
     #[serde(rename="bgr_32")]
     Bgr32 = 70,
     #[serde(rename="bgr_24")]
+
     Bgr24 = 3,
     #[serde(rename="gray_8")]
     Gray8 = 1,
@@ -121,7 +122,7 @@ pub enum PixelBuffer<'a> {
     Bgra32(ImgRef<'a, rgb::alt::BGRA8>),
     Bgr32(ImgRef<'a, rgb::alt::BGRA8>), // there's no BGRX support in the rgb crate
     Bgr24(ImgRef<'a, rgb::alt::BGR8>),
-    Gray8(ImgRef<'a, rgb::alt::GRAY8>),
+    Gray8(ImgRef<'a, rgb::alt::Gray<u8>>),
 }
 
 /// Named interpolation function+configuration presets
@@ -333,10 +334,15 @@ pub enum Color {
 }
 
 use imageflow_helpers::colors::*;
+use rgb::alt::BGRA8;
 impl Color {
 
     pub fn to_u32_bgra(&self) -> std::result::Result<u32, ParseColorError> {
         self.to_color_32().map(|c| c.to_bgra_le() )
+    }
+
+    pub fn to_bgra8(&self) -> std::result::Result<BGRA8, ParseColorError> {
+        self.to_color_32().map(|c| c.to_bgra8())
     }
 
     pub fn to_u32_rgba_big_endian(&self) -> std::result::Result<u32, ParseColorError> {
@@ -840,6 +846,7 @@ pub enum IoEnum {
     Base64(String),
     #[serde(rename="byte_array")]
     ByteArray(Vec<u8>),
+    // TODO: A PathBuf might be more appropriate
     #[serde(rename="file")]
     Filename(String),
     #[serde(rename="output_buffer")]
@@ -1462,7 +1469,7 @@ impl Response001 {
         }
     }
 }
-#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
+//#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 pub fn rtf<'de,T>(value: T) -> usize
     where T: serde::Serialize,
           T: serde::Deserialize<'de>

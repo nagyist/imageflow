@@ -1,11 +1,12 @@
 use crate::internal_prelude::works_everywhere::*;
 use ::std::option::Option;
-use crate::ffi::BitmapBgra;
 use ::std::cmp;
 use ::std::option::Option::*;
 use num::Integer;
 
 use imageflow_types::PixelFormat;
+
+use super::bitmaps::BitmapWindowMut;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum ScanEdge {
@@ -71,6 +72,7 @@ const SCAN_FULL: ScanRegion = ScanRegion {
     y_2_percent: 1f32,
 };
 
+#[derive(Copy, Clone, Debug)]
 pub struct RectCorners {
     pub x1: u32,
     pub y1: u32,
@@ -78,6 +80,7 @@ pub struct RectCorners {
     pub y2: u32,
 }
 
+#[derive(Copy, Clone, Debug)]
 struct Rect {
     x: u32,
     y: u32,
@@ -192,22 +195,22 @@ impl WhitespaceSearch {
     }
 }
 
-pub fn detect_content(b: &BitmapBgra, threshold: u32) -> Option<RectCorners> {
-    if b.w > i32::max_value() as u32 || b.h > i32::max_value() as u32 {
+pub fn detect_content(b: &BitmapWindowMut<u8>, threshold: u32) -> Option<RectCorners> {
+    if b.w() > i32::max_value() as u32 || b.h() > i32::max_value() as u32 {
         panic!("Bitmap dimension overflow")
     }
-    if b.w < 3 || b.h < 3 {
-        return Some(RectCorners { x1: 0, x2: b.w, y1: 0, y2: b.h });
+    if b.w() < 3 || b.h() < 3 {
+        return Some(RectCorners { x1: 0, x2: b.w(), y1: 0, y2: b.h() });
     }
 
     let mut search = WhitespaceSearch {
-        w: b.w,
-        h: b.h,
+        w: b.w(),
+        h: b.h(),
         threshold,
         max_x: 0,
         max_y: 0,
-        min_y: b.h,
-        min_x: b.w,
+        min_y: b.h(),
+        min_x: b.w(),
     };
     let mut buf = Buffer { pixels: [0u8; 2048], x: 0, w: 0, h: 0, y: 0 };
     // Let's aim for a minimum dimension of 7px per window
@@ -218,7 +221,7 @@ pub fn detect_content(b: &BitmapBgra, threshold: u32) -> Option<RectCorners> {
     // We should now have a good idea of where boundaries lie. However... if it seems that more than 25% is whitespace,
     // we should do a different type of scan.
     let area_to_scan_separately: i64 = search.min_x as i64 * search.h as i64 + search.min_y as i64 * search.w as i64 + (search.w as i64 - search.max_x as i64) * search.h as i64
-        + (search.h as i64 - search.max_y as i64) * search.h as i64;
+        + (search.h as i64 - search.max_y as i64) * search.w as i64;
 
     if area_to_scan_separately > (search.h as i64 * search.w as i64) {
         // Just scan it all at once, non-directionally
@@ -233,7 +236,7 @@ pub fn detect_content(b: &BitmapBgra, threshold: u32) -> Option<RectCorners> {
     }
     // Consider the entire image as content if it is blank (or we were unable to detect any energy).
 
-    if search.min_x == b.w && search.max_x == 0 && search.min_y == b.h && search.max_y == 0 {
+    if search.min_x == b.w() && search.max_x == 0 && search.min_y == b.h() && search.max_y == 0 {
         Some(RectCorners { x1: 0, y1: 0, x2: search.w, y2: search.h })
     } else {
         Some(RectCorners {
@@ -245,7 +248,7 @@ pub fn detect_content(b: &BitmapBgra, threshold: u32) -> Option<RectCorners> {
     }
 }
 
-fn check_region(search: &mut WhitespaceSearch, buf: &mut Buffer, b: &BitmapBgra, region: &ScanRegion) {
+fn check_region(search: &mut WhitespaceSearch, buf: &mut Buffer, b: &BitmapWindowMut<u8>, region: &ScanRegion) {
     if let Some(RectCorners { x1, y1, x2, y2 }) = search.get_search_rect(region) {
         let w = x2 - x1;
         let h = y2 - y1;
@@ -328,10 +331,10 @@ fn check_region(search: &mut WhitespaceSearch, buf: &mut Buffer, b: &BitmapBgra,
 
 ///
 /// Computes a fast/approximated grayscale subset of the given bitmap
-fn fill_grayscale_buffer_from_bitmap(buf: &mut Buffer, b: &BitmapBgra) {
+fn fill_grayscale_buffer_from_bitmap(buf: &mut Buffer, b: &BitmapWindowMut<u8>) {
     approximate_grayscale(&mut buf.pixels, buf.w as usize,buf.x, buf.y, buf.w, buf.h, b)
 }
-pub fn approximate_grayscale(grayscale: &mut [u8], grayscale_stride: usize, x: u32, y: u32, w: u32, h: u32, source_bitmap: &BitmapBgra) {
+pub fn approximate_grayscale(grayscale: &mut [u8], grayscale_stride: usize, x: u32, y: u32, w: u32, h: u32, source_bitmap: &BitmapWindowMut<u8>) {
     /* Red: 0.299;
 Green: 0.587;
 Blue: 0.114;
@@ -342,19 +345,22 @@ Blue: 0.114;
         panic!("Invalid grayscale_Stride")
     }
 
-    let bytes_per_pixel = b.fmt.bytes();
-    let first_pixel = b.stride as usize * y as usize + bytes_per_pixel * x as usize;
-    let remnant: usize = b.stride as usize - (bytes_per_pixel * w as usize);
+    let bytes_per_pixel = b.t_per_pixel() as usize;
+    let stride = b.info().t_stride() as usize;
+    let first_pixel = stride * y as usize + bytes_per_pixel * x as usize;
+    let remnant: usize = stride - (bytes_per_pixel * w as usize);
     let gray_remnant: usize = grayscale_stride - w as usize;
 
-    let bitmap_bytes_accessed = b.stride as usize * (y + h - 1) as usize + (bytes_per_pixel * (x + w) as usize);
-    if bitmap_bytes_accessed > b.stride as usize * b.h as usize {
+    let bitmap_bytes_accessed = stride * (y + h - 1) as usize + (bytes_per_pixel * (x + w) as usize);
+    if bitmap_bytes_accessed > stride * b.h() as usize {
         panic!("Out of bounds bitmap access prevented");
     }
 
-    let input_bitmap = unsafe{ b.pixels_slice().unwrap() } ;
-    let mut input_index = b.stride as usize * y as usize + bytes_per_pixel * x as usize;
-    match b.fmt {
+    let input_bitmap = b.underlying_slice();
+    let mut input_index = stride * y as usize + bytes_per_pixel * x as usize;
+
+    let fmt = b.info().calculate_pixel_format().unwrap();
+    match fmt {
         PixelFormat::Bgra32 => {
             let mut buf_ix = 0usize;
             for y in 0..h {

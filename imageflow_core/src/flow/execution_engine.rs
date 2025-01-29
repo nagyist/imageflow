@@ -515,9 +515,8 @@ impl<'a> Engine<'a> {
                                 let mut bitmap = bitmaps.try_borrow_mut(bitmap_key)
                                     .map_err(|e| e.at(here!()))?;
 
-                                let bitmap_bgra = bitmap.get_window_u8().unwrap().to_bitmap_bgra()?;
 
-                                crate::codecs::write_png(&path, &bitmap_bgra)
+                                crate::codecs::write_png(&path, &mut bitmap.get_window_u8().unwrap())
                                     .map_err(|e| e.at(here!()))?;
 
                             }
@@ -570,8 +569,8 @@ impl<'a> Engine<'a> {
                     s::IoEnum::Filename(ref str) => s::ResultBytes::PhysicalFile(str.to_owned()),
                     s::IoEnum::OutputBase64 => {
                         let slice = self.c.get_output_buffer_slice(r.io_id).map_err(|e| e.at(here!())).unwrap();
-                        let b64 = base64::encode_config(slice,
-                                                        base64::Config::new(base64::CharacterSet::Standard, true));
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(slice);
 
                         s::ResultBytes::Base64(b64)
                     },
@@ -598,10 +597,9 @@ impl<'a> OpCtxMut<'a> {
 
 
 
-use daggy::walker::Walker;
+use petgraph::visit::Walker;
 use crate::flow::definitions::NodeResult::Frame;
 use crate::codecs::NamedEncoders::LodePngEncoder;
-use base64::CharacterSet;
 
 
 pub fn flow_node_has_dimensions(g: &Graph, node_id: NodeIndex) -> bool {

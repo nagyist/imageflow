@@ -7,6 +7,8 @@ use imageflow_helpers::colors::*;
 use imageflow_types::Filter;
 use imageflow_helpers::preludes::from_std::fmt::Formatter;
 
+use super::srcset::apply_srcset_string;
+
 macro_attr! {
 
 
@@ -214,7 +216,7 @@ pub enum ScalingColorspace {
 
 }
 
-pub static IR4_KEYS: [&'static str;80] = ["mode", "anchor", "flip", "sflip", "scale", "cache", "process",
+pub static IR4_KEYS: [&'static str;81] = ["mode", "anchor", "flip", "sflip", "scale", "cache", "process",
     "quality", "jpeg.quality", "zoom", "crop", "cropxunits", "cropyunits",
     "w", "h", "width", "height", "maxwidth", "maxheight", "format", "thumbnail",
      "autorotate", "srotate", "rotate", "ignoreicc", "ignore_icc_errors", //really? : "precise_scaling_ratio",
@@ -227,7 +229,7 @@ pub static IR4_KEYS: [&'static str;80] = ["mode", "anchor", "flip", "sflip", "sc
     "jpeg.turbo", "encoder", "decoder", "builder", "s.roundcorners", "paddingwidth",
     "paddingheight", "margin", "borderwidth", "decoder.min_precise_scaling_ratio",
     "png.quality","png.min_quality", "png.quantization_speed", "png.libpng", "png.max_deflate",
-    "png.lossless", "up.filter", "down.filter", "dpr", "up.colorspace"];
+    "png.lossless", "up.filter", "down.filter", "dpr", "up.colorspace", "srcset"];
 
 
 #[derive(PartialEq,Debug, Clone)]
@@ -240,7 +242,7 @@ pub enum ParseWarning{
     ValueInvalid((&'static str, String))
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(map_entry))]
+
 pub fn parse_url(url: &Url) -> (Instructions, Vec<ParseWarning>) {
     let mut warnings = Vec::new();
     let mut map = HashMap::new();
@@ -381,7 +383,7 @@ impl Instructions{
         m
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(or_fun_call))]
+
     pub fn delete_from_map(map: &mut HashMap<String,String>, warnings: Option<&mut Vec<ParseWarning>>) -> Instructions {
         let mut p = Parser { m: map, w: warnings, delete_supported: true };
         let mut i = Instructions::new();
@@ -422,7 +424,7 @@ impl Instructions{
         i.cropyunits = p.parse_f64("cropyunits");
         i.quality = p.parse_i32("quality").or_else(||p.parse_i32("jpeg.quality"));
         i.zoom = p.parse_f64("zoom").or_else(|| p.parse_f64("dpr"));
-        i.bgcolor_srgb = p.parse_color_srgb("bgcolor").or_else(||p.parse_color_srgb("bgcolor"));
+        i.bgcolor_srgb = p.parse_color_srgb("bgcolor");
         i.jpeg_subsampling = p.parse_subsampling("subsampling");
 
         i.webp_quality = p.parse_f64("webp.quality");
@@ -469,6 +471,10 @@ impl Instructions{
         i.jpeg_turbo = p.parse_bool("jpeg.turbo");
 
         i.watermark_red_dot = p.parse_bool("watermark_red_dot");
+
+
+        p.apply_srcset(&mut i);
+
         i
     }
 
@@ -506,6 +512,22 @@ struct Parser<'a>{
     delete_supported: bool
 }
 impl<'a> Parser<'a>{
+
+    fn remove(&mut self, key: &str) -> Option<String>{
+        self.m.remove(key).map(|v| v.trim().to_owned())
+    }
+
+    fn apply_srcset(&mut self, i: &mut Instructions){
+        if let Some(srcset) = self.remove("srcset"){
+            if self.w.is_some(){
+                apply_srcset_string(i, &srcset, self.w.as_mut().unwrap());
+            }else{
+                let mut w = Vec::new();
+                apply_srcset_string(i, &srcset, &mut w);
+            }
+        }
+
+    }
 
     fn warn(&mut self, warning: ParseWarning){
         if self.w.is_some() {
@@ -1076,6 +1098,7 @@ fn test_url_parsing() {
     t("s.grayscale=Y",  Instructions{s_grayscale: Some(GrayscaleAlgorithm::Y), ..Default::default()}, vec![]);
     t("s.grayscale=Bt709",  Instructions{s_grayscale: Some(GrayscaleAlgorithm::Bt709), ..Default::default()}, vec![]);
 
+    t("bgcolor=é", Default::default(), vec![ParseWarning::ValueInvalid(("bgcolor".into(), "é".into())), ParseWarning::KeyNotSupported(("bgcolor".into(), "é".into()))]);
     t("bgcolor=red", Instructions { bgcolor_srgb: Some(Color32(0xffff0000)), ..Default::default() }, vec![]);
     t("bgcolor=f00", Instructions { bgcolor_srgb: Some(Color32(0xffff0000)), ..Default::default() }, vec![]);
     t("bgcolor=f00f", Instructions { bgcolor_srgb: Some(Color32(0xffff0000)), ..Default::default() }, vec![]);
@@ -1118,12 +1141,43 @@ fn test_url_parsing() {
     t("anchor=bottomleft",  Instructions{anchor: Some((Anchor1D::Near, Anchor1D::Far)), ..Default::default()}, vec![]);
     t("watermark_red_dot=true",  Instructions{watermark_red_dot: Some(true), ..Default::default()}, vec![]);
 
+    let srcset_default = Instructions{mode: Some(FitMode::Max), ..Default::default()};
+    t("srcset=100w",  Instructions{w: Some(100), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=100h",  Instructions{h: Some(100), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=2x",  Instructions{zoom: Some(2.0), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=webp-90",  Instructions{format: Some(OutputFormat::Webp), webp_quality: Some(90.0), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=png-90",  Instructions{format: Some(OutputFormat::Png), png_quality: Some(90), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=jpeg-90",  Instructions{format: Some(OutputFormat::Jpeg), quality: Some(90), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=crop-10-20-80-90",  Instructions{cropxunits: Some(100.0), cropyunits: Some(100.0),crop: Some([10.0,20.0,80.0,90.0]), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=upscale",  Instructions{scale: Some(ScaleMode::Both), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=fit-crop",  Instructions{mode: Some(FitMode::Crop), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=fit-pad",  Instructions{mode: Some(FitMode::Pad), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=fit-distort",  Instructions{mode: Some(FitMode::Stretch), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=",  Instructions{..Default::default()}, vec![]);
+    t("srcset=sharp-20",  Instructions{f_sharpen: Some(20.0), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=sharpen-20",  Instructions{f_sharpen: Some(20.0), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=sharp-20",  Instructions{f_sharpen: Some(20.0), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=gif",  Instructions{format: Some(OutputFormat::Gif), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=png",  Instructions{format: Some(OutputFormat::Png), png_lossless: Some(true), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=png-l",  Instructions{format: Some(OutputFormat::Png), png_lossless: Some(true), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=png-lossless",  Instructions{format: Some(OutputFormat::Png), png_lossless: Some(true), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=webp-l",  Instructions{format: Some(OutputFormat::Webp), webp_lossless: Some(true), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=webp-lossless",  Instructions{format: Some(OutputFormat::Webp), webp_lossless: Some(true), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=webp",  Instructions{format: Some(OutputFormat::Webp), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=webp&webp.quality=5",  Instructions{format: Some(OutputFormat::Webp), webp_quality: Some(5.0), ..srcset_default.to_owned()}, vec![]);
+    t("srcset=webp-76,100w, 100h,2x ,sharp-20 ,fit-crop", Instructions{format: Some(OutputFormat::Webp), webp_quality: Some(76.0), w: Some(100), h: Some(100), zoom: Some(2.0), f_sharpen: Some(20.0), mode: Some(FitMode::Crop), ..srcset_default.to_owned()}, vec![]);
+
 
     expect_warning("a.balancewhite","gimp",  Instructions{a_balance_white: Some(HistogramThresholdAlgorithm::Gimp), ..Default::default()});
     expect_warning("a.balancewhite","simple",  Instructions{a_balance_white: Some(HistogramThresholdAlgorithm::Simple), ..Default::default()});
     expect_warning("crop","(0,3,80, 90)",  Instructions { crop: Some([0f64,3f64,80f64,90f64]), ..Default::default() });
     expect_warning("crop","(0,3,happy, 90)",  Instructions { crop: Some([0f64,3f64,0f64,90f64]), ..Default::default() });
     expect_warning("crop","(  a0, 3, happy, 90)",  Instructions { crop: Some([0f64,3f64,0f64,90f64]), ..Default::default() });
+
+    // expect_warning("srcset","crop,pad",  Instructions{mode: Some(FitMode::Pad), ..srcset_default.to_owned()});
+    // expect_warning("srcset","pad,crop",  Instructions{mode: Some(FitMode::Crop), ..srcset_default.to_owned()});
+    // expect_warning("srcset","png,gif",  Instructions{format: Some(OutputFormat::Gif), ..srcset_default.to_owned()});
+
 
 }
 

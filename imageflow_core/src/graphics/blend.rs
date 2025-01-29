@@ -5,7 +5,7 @@ use itertools::Itertools;
 //noinspection RsBorrowChecker,RsBorrowChecker
 pub fn apply_matte(b: &mut BitmapWindowMut<u8>, matte_color: imageflow_types::Color) -> Result<(), FlowError>{
     // There's nothing to do unless it's BGRA
-    if b.info().channels() != 4 || !b.info().alpha_meaningful() {
+    if b.t_per_pixel() != 4 || !b.info().alpha_meaningful() {
         return Ok(())
     }
 
@@ -23,7 +23,7 @@ pub fn apply_matte(b: &mut BitmapWindowMut<u8>, matte_color: imageflow_types::Co
     for y in 0..b.h(){
         let mut row = b.row_window(y).unwrap();
 
-        for mut pixel in row.slice_of_pixels_first_row().unwrap().iter_mut(){
+        for pixel in row.slice_of_pixels_first_row().unwrap().iter_mut(){
             let pixel_a = (*pixel).a;
             let pixel_a_f32 = pixel_a as i32 as f32 * alpha_to_float;
             if pixel_a == 0{
