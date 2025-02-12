@@ -8,6 +8,8 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![cfg_attr(feature = "nightly", feature(portable_simd))]
+
 
 extern crate petgraph;
 extern crate daggy;
@@ -16,6 +18,10 @@ extern crate imageflow_c_components;
 extern crate imageflow_helpers;
 extern crate imageflow_riapi;
 extern crate num;
+
+// for testing
+#[cfg(test)]
+extern crate rand;
 
 #[macro_use]
 extern crate lazy_static;
@@ -29,7 +35,7 @@ extern crate uuid;
 extern crate imagequant;
 extern crate gif;
 extern crate smallvec;
-extern crate chashmap;
+extern crate dashmap;
 extern crate rgb;
 extern crate imgref;
 extern crate lodepng;
@@ -99,7 +105,7 @@ mod internal_prelude {
         pub use crate::{Graph, Context, JsonResponse,
                    MethodRouter};
         #[doc(no_inline)]
-        pub use crate::{CError, clients, FlowError, Result, ErrorKind};
+        pub use crate::{clients, FlowError, Result, ErrorKind};
         #[doc(no_inline)]
         pub use crate::clients::fluent;
     }
@@ -112,7 +118,7 @@ mod internal_prelude {
     #[doc(hidden)]
     pub mod works_everywhere {
         #[doc(no_inline)]
-        pub use crate::{CError, clients, FlowError, Result, ErrorKind};
+        pub use crate::{clients, FlowError, Result, ErrorKind};
         #[doc(no_inline)]
         pub use crate::internal_prelude::external::*;
     }

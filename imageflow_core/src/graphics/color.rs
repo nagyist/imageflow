@@ -1,7 +1,7 @@
-use crate::graphics::math::{pow, fastpow};
+use crate::graphics::math::fastpow;
 
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum WorkingFloatspace {
     StandardRGB,
     LinearRGB,
@@ -105,7 +105,7 @@ fn linear_to_srgb(clr: f32) -> f32 {
     if clr <= 0.0031308f32 {
         12.92f32 * clr * 255.0f32
     }else {
-        1.055f32 * 255.0f32 * unsafe{ fastpow(clr, 0.41666666f32)} - 14.025f32
+        1.055f32 * 255.0f32 * fastpow(clr, 0.41666666f32) - 14.025f32
     }
 }
 #[inline]
@@ -153,7 +153,7 @@ pub unsafe fn linear_to_luv(bgr: *mut f32) {
     let v: f32 = 9 as i32 as f32 * Y / (X + 15 as i32 as f32 * Y + 3 as i32 as f32 * Z);
     let ref mut fresh1 = *bgr.offset(0);
     *fresh1 = if Yd > y_split {
-        (116 as i32 as f32 * pow(Yd as f64, (1.0f32 / 3.0f32) as f64) as f32) - 16 as i32 as f32
+        (116 as i32 as f32 * (Yd as f64).powf((1.0f32 / 3.0f32) as f64) as f32) - 16 as i32 as f32
     } else {
         (y_adjust) * Yd
     };
@@ -186,10 +186,8 @@ pub unsafe fn luv_to_linear(luv: *mut f32) {
     let u: f32 = U / (13 as i32 as f32 * L) + un;
     let v: f32 = V / (13 as i32 as f32 * L) + vn;
     let Y: f32 = if L > 8 as i32 as f32 {
-        (Yn) * pow(
-            ((L + 16 as i32 as f32) / 116 as i32 as f32) as f64,
-            3 as i32 as f64,
-        ) as f32
+        (Yn) * (((L + 16 as i32 as f32) / 116 as i32 as f32) as f64).powf(3 as i32 as f64)
+        as f32
     } else {
         (Yn * L) * y_adjust_2
     };

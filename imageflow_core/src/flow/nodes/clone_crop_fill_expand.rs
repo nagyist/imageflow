@@ -1,5 +1,5 @@
 use super::internal_prelude::*;
-use crate::graphics::bitmaps::BitmapCompositing;
+use crate::graphics::{bitmaps::BitmapCompositing, color};
 
 
 pub static COPY_RECT: CopyRectNodeDef = CopyRectNodeDef{};
@@ -42,35 +42,24 @@ impl NodeDefOneInputOneCanvas for CopyRectNodeDef{
                 .try_borrow_mut()
                 .map_err(|e| nerror!(ErrorKind::FailedBorrow))?;
 
-            let mut canvas_bgra = unsafe {
-                canvas_bitmap.get_window_u8().unwrap().to_bitmap_bgra()?
-            };
-
             let mut input_bitmap = bitmaps
                 .get(input_key).ok_or_else(|| nerror!(ErrorKind::BitmapKeyNotFound))?
                 .try_borrow_mut()
                 .map_err(|e| nerror!(ErrorKind::FailedBorrow))?;
 
-            let mut input_bgra = unsafe {
-                input_bitmap.get_window_u8().unwrap().to_bitmap_bgra()?
-            };
-
-            if input_bgra.w <= from_x || input_bgra.h <= from_y ||
-                input_bgra.w < from_x + w ||
-                input_bgra.h < from_y + h ||
-                canvas_bgra.w < x + w ||
-                canvas_bgra.h < y + h {
+            if input_bitmap.w() <= from_x || input_bitmap.h() <= from_y ||
+                input_bitmap.w() < from_x + w ||
+                input_bitmap.h() < from_y + h ||
+                canvas_bitmap.w() < x + w ||
+                canvas_bitmap.h() < y + h {
                 return Err(nerror!(crate::ErrorKind::InvalidNodeParams, "Invalid coordinates. Canvas is {}x{}, Input is {}x{}, Params provided: {:?}",
-                         canvas_bgra.w,
-                         canvas_bgra.h,
-                         input_bgra.w,
-                         input_bgra.h,
+                         canvas_bitmap.w(),
+                         canvas_bitmap.h(),
+                         input_bitmap.w(),
+                         input_bitmap.h(),
                          p));
             }
-            crate::graphics::copy_rect::copy_rect(&mut input_bgra, &mut canvas_bgra, from_x, from_y, x, y, w, h)?;
-
-
-            canvas_bitmap.set_compositing(BitmapCompositing::BlendWithSelf);
+            crate::graphics::copy_rect::copy_rectangle(&mut input_bitmap, &mut canvas_bitmap, from_x, from_y, x, y, w, h)?;
 
             Ok(())
         } else {
@@ -104,25 +93,14 @@ impl NodeDefMutateBitmap for FillRectNodeDef {
 
             bitmap.set_compositing(BitmapCompositing::BlendWithSelf);
 
-            unsafe {
-
-                if x2 <= x1 || y2 <= y1 || (x1 as i32) < 0 || (y1 as i32) < 0 || x2 > bitmap.w() || y2 > bitmap.h(){
-                    return Err(nerror!(crate::ErrorKind::InvalidCoordinates, "Invalid coordinates for {}x{} bitmap: {:?}", bitmap.w(), bitmap.h(), p));
-                }
-
-
-                let mut bitmap_bgra = bitmap.get_window_u8().unwrap().to_bitmap_bgra()?;
-
-
-                crate::graphics::fill::flow_bitmap_bgra_fill_rect(
-                                                    &mut bitmap_bgra,
-                                                    x1,
-                                                    y1,
-                                                    x2,
-                                                    y2,
-                                                    color.clone().to_u32_bgra().unwrap())
-                    .map_err(|e| e.at(here!()))?;
+            if x2 <= x1 || y2 <= y1 || (x1 as i32) < 0 || (y1 as i32) < 0 || x2 > bitmap.w() || y2 > bitmap.h(){
+                return Err(nerror!(crate::ErrorKind::InvalidCoordinates, "Invalid coordinates for {}x{} bitmap: {:?}", bitmap.w(), bitmap.h(), p));
             }
+            let mut window = bitmap.get_window_u8().unwrap();
+
+            window.fill_rect(x1, y1, x2, y2, &color)
+                .map_err(|e| e.at(here!()))?;
+
             Ok(())
         } else {
             Err(nerror!(crate::ErrorKind::NodeParamsMismatch, "Need FillRect, got {:?}", p))
@@ -501,26 +479,26 @@ impl NodeDefOneInputExpand for CropWhitespaceDef {
                     let mut bitmap = bitmaps.try_borrow_mut(bitmap_key)
                         .map_err(|e| e.at(here!()))?;
 
-                    unsafe {
-                        let frame = bitmap.get_window_u8()
-                            .ok_or_else(|| nerror!(ErrorKind::InvalidBitmapType))?
-                            .to_bitmap_bgra().map_err(|e| e.at(here!()))?;
+
+                    let frame = bitmap.get_window_u8().unwrap();
 
 
-                        if let Some(rect) = crate::graphics::whitespace::detect_content(&frame, threshold) {
-                            if rect.x2 <= rect.x1 || rect.y2 <= rect.y1 {
-                                return Err(nerror!(crate::ErrorKind::InvalidState, "Whitespace detection returned invalid rectangle"));
-                            }
-                            let padding = (percent_padding * (rect.x2 - rect.x1 + rect.y2 - rect.y1) as f32 / 2f32).ceil() as i64;
-                            Ok((cmp::max(0, rect.x1 as i64 - padding) as u32, cmp::max(0, rect.y1 as i64 - padding) as u32,
-                                cmp::min(bitmap.w() as i64, rect.x2 as i64 + padding) as u32, cmp::min(bitmap.h() as i64, rect.y2 as i64 + padding) as u32))
-                        } else {
-                            return Err(nerror!(crate::ErrorKind::InvalidState, "Failed to complete whitespace detection"));
+                    if let Some(rect) = crate::graphics::whitespace::detect_content(&frame, threshold) {
+                        if rect.x2 <= rect.x1 || rect.y2 <= rect.y1 {
+                            return Err(nerror!(crate::ErrorKind::InvalidState, "Whitespace detection returned invalid rectangle"));
                         }
+                        let padding = (percent_padding / 100f32 * (rect.x2 - rect.x1 + rect.y2 - rect.y1) as f32 / 2f32).ceil() as i64;
+                        //eprintln!("Detected {}x{} whitespace rect: {:?} within {}x{}, padding: {}", rect.x2 - rect.x1, rect.y2 - rect.y1, rect, frame.w, frame.h, padding);
+                        Ok((cmp::max(0, rect.x1 as i64 - padding) as u32, cmp::max(0, rect.y1 as i64 - padding) as u32,
+                            cmp::min(bitmap.w() as i64, rect.x2 as i64 + padding) as u32, cmp::min(bitmap.h() as i64, rect.y2 as i64 + padding) as u32))
+                    } else {
+                        return Err(nerror!(crate::ErrorKind::InvalidState, "Failed to complete whitespace detection"));
                     }
+
                 },
                 other => { Err(nerror!(crate::ErrorKind::InvalidOperation, "Cannot CropWhitespace without a parent bitmap; got {:?}", other)) }
             }?;
+            //eprintln!("Whitespace cropping to {}x{} of {}x{}: x1={}, y1={}, x2={}, y2={}", x2-x1, y2-y1, b.w, b.h, x1, y1, x2, y2);
             ctx.replace_node(ix, vec![
                 Node::n(&CROP,
                         NodeParams::Json(s::Node::Crop { x1, y1, x2, y2 }))

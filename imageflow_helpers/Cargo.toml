@@ -3,7 +3,7 @@ name = "imageflow_helpers"
 version = "0.1.0"
 authors = ["Lilith River <lilith@imazen.io>"]
 workspace = "../"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 libc = "0.2"
@@ -22,7 +22,7 @@ serde_derive = "*"
 lazy_static = "1"
 
 # fast hashes, crypto hashs
-twox-hash = "1"
+twox-hash = "2"
 fnv = "*"
 blake2-rfc = "*"
 sha2 = "*"
@@ -37,9 +37,9 @@ regex = { version = "1" } #, features = ["pattern"]
 rand = "*"
 rgb = "0.8"
 
-base64 = "0.13"
+base64 = "0.22"
 
-zip = { version = "0.6", default-features = false }
+zip = { version = "2" }
 
 
 
@@ -52,9 +52,13 @@ unicase = "2"
 
 backtrace = "0.3"
 
+mimalloc = { version = "*", features = ["secure"], optional = true }
+
+
 [dev-dependencies]
 mockito = "*"
 
 [features]
 nightly = []
+mimalloc = ["dep:mimalloc"]
 

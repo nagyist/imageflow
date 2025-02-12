@@ -6,13 +6,13 @@ extern crate serde;
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::path::{Path};
+use std::path::{Path, PathBuf};
 use std::io::{Write, Read, BufWriter};
 use crate::fc::{JsonResponse,  ErrorCategory};
 use crate::fc::errors::CategorizedError;
 
 pub enum JobSource {
-    JsonFile(String),
+    JsonFile(PathBuf),
     // NamedDemo(String),
     Ir4QueryString(String)
 }
@@ -61,6 +61,7 @@ pub struct CmdBuild {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum CmdError {
     // DemoNotFound(String),
     JsonRecipeNotFound(String),
@@ -145,7 +146,7 @@ impl CmdBuild {
                 let mut data = Vec::new();
                 let mut f = match File::open(&path) {
                     Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        return Err(CmdError::JsonRecipeNotFound(path.to_owned()));
+                        return Err(CmdError::JsonRecipeNotFound(path.to_string_lossy().into()));
                     }
                     other => other,
                 }?;
@@ -365,7 +366,18 @@ impl CmdBuild {
     // Write new invocation to STDOUT, for execution in 'directory'.
     // Will write recipe and dependencies into directory
     pub fn bundle_to(self, directory: &Path) -> i32{
-        std::fs::create_dir(directory).unwrap();
+        match std::fs::create_dir(directory) {
+            Ok(_) => (),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    eprintln!("Error: --bundle-to target directory already exists: {}", e);
+                    return 1;
+                } else {
+                    eprintln!("Failed to create directory: {}", e);
+                    return 1;
+                }
+            }
+        }
         let (log, transformed) = CmdBuild::transform_build(self.job.unwrap(), directory).unwrap();
         CmdBuild::write_json(&directory.join("recipe.json"), &transformed);
         println!("cd {:?}", &directory);
@@ -399,7 +411,7 @@ impl CmdBuild {
     }
     ///
     /// Write the JSON response (if present) to the given file or STDOUT
-    pub fn write_response_maybe(&self, response_file: Option<&str>, allow_stdout: bool) -> std::io::Result<()> {
+    pub fn write_response_maybe(&self, response_file: Option<&PathBuf>, allow_stdout: bool) -> std::io::Result<()> {
         if  self.response.is_some() {
 
             if let Some(filename) = response_file {
