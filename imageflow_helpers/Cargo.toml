@@ -3,7 +3,7 @@ name = "imageflow_helpers"
 version = "0.1.0"
 authors = ["Lilith River <lilith@imazen.io>"]
 workspace = "../"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 libc = "0.2"
@@ -22,7 +22,7 @@ serde_derive = "*"
 lazy_static = "1"
 
 # fast hashes, crypto hashs
-twox-hash = "1"
+twox-hash = "2"
 fnv = "*"
 blake2-rfc = "*"
 sha2 = "*"
@@ -33,14 +33,11 @@ uuid = { version = "*", features= ["v4", "v5"]}
 #lockless = { git="https://github.com/Diggsey/lockless", rev="15264477a4889a9cb2964180b33a53919d72d3fc" }
 smallvec = "*"
 # regex
-regex = { version = "1" } #, features = ["pattern"]
+regex-lite = { version = "0.1.6" } #, features = ["pattern"]
 rand = "*"
 rgb = "0.8"
 
-base64 = "0.13"
-
-zip = { version = "0.6", default-features = false }
-
+base64 = "0.22"
 
 
 
@@ -52,9 +49,13 @@ unicase = "2"
 
 backtrace = "0.3"
 
+mimalloc = { version = "*", features = ["secure"], optional = true }
+
+
 [dev-dependencies]
-mockito = "*"
+
 
 [features]
 nightly = []
+mimalloc = ["dep:mimalloc"]
 

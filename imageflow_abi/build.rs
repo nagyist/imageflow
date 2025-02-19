@@ -1,15 +1,15 @@
-
 extern crate cbindgen;
-extern crate regex;
+extern crate regex_lite;
 extern crate imageflow_helpers;
 use imageflow_helpers::identifier_styles::*;
 
-use regex::{Regex, Captures};
+use regex_lite::{Regex, Captures};
 use std::io::Write;
 use std::path;
 use cbindgen::Builder;
 use std::io::Cursor;
 use std::env;
+use rayon::prelude::*;
 
 
 static OPAQUE_STRUCTS: &'static str = r#"
@@ -310,56 +310,29 @@ fn main() {
     //let base = "imageflow_"; //for debugging more easily
     let base = "../bindings/headers/imageflow_";
 
-    build(format!("{}default.h",base), Target::Default);
+    // Create a vector of tuples containing (filename, target)
+    let builds = vec![
+        (format!("{}default.h", base), Target::Default),
+        (format!("{}lua.h", base), Target::Lua),
+        (format!("{}raw.h", base), Target::Raw),
+        (format!("{}short.h", base), Target::SignaturesOnly),
+        (format!("{}pinvoke.h", base), Target::PInvoke),
+        (format!("{}SCREAMING_ENUMS.h", base), Target::PrefixAll{
+            prefix: "Imageflow",
+            struct_name: Style::Snake,
+            enum_name: Style::ScreamingSnake,
+            enum_member: Style::ScreamingSnake,
+        }),
+        (format!("{}PrefixedPascalCase.h", base), Target::PrefixAll{
+            prefix: "Imageflow",
+            struct_name: Style::PascalCase,
+            enum_name: Style::PascalCase,
+            enum_member: Style::PascalCase,
+        }),
+    ];
 
-    build(format!("{}lua.h",base), Target::Lua);
-    build(format!("{}raw.h",base), Target::Raw);
-
-    build(format!("{}short.h",base), Target::SignaturesOnly);
-    build(format!("{}pinvoke.h",base), Target::PInvoke);
-
-    build(format!("{}SCREAMING_SNAKE.h",base), Target::PrefixAll{
-        prefix: "Imageflow",
-        struct_name: Style::ScreamingSnake,
-        enum_name: Style::ScreamingSnake,
-        enum_member: Style::ScreamingSnake,
+    // Use rayon to parallelize the builds
+    builds.par_iter().for_each(|(file, target)| {
+        build(file.clone(), *target);
     });
-    build(format!("{}SCREAMING_ENUMS.h",base), Target::PrefixAll{
-        prefix: "Imageflow",
-        struct_name: Style::Snake,
-        enum_name: Style::ScreamingSnake,
-        enum_member: Style::ScreamingSnake,
-    });
-    build(format!("{}PascalCase.h",base), Target::PrefixAll{
-        prefix: "",
-        struct_name: Style::PascalCase,
-        enum_name: Style::PascalCase,
-        enum_member: Style::PascalCase,
-    });
-    build(format!("{}PrefixedPascalCase.h",base), Target::PrefixAll{
-        prefix: "Imageflow",
-        struct_name: Style::PascalCase,
-        enum_name: Style::PascalCase,
-        enum_member: Style::PascalCase,
-    });
-    build(format!("{}Prefixed_Pascal_Snake.h",base), Target::PrefixAll{
-        prefix: "Imageflow",
-        struct_name: Style::PascalSnake,
-        enum_name: Style::PascalSnake,
-        enum_member: Style::PascalSnake,
-    });
-
-    build(format!("{}prefixed_Camel_Snake.h",base), Target::PrefixAll{
-        prefix: "Imageflow",
-        struct_name: Style::CamelSnake,
-        enum_name: Style::CamelSnake,
-        enum_member: Style::CamelSnake,
-    });
-    build(format!("{}prefixedCamelCase.h",base), Target::PrefixAll{
-        prefix: "Imageflow",
-        struct_name: Style::CamelCase,
-        enum_name: Style::CamelCase,
-        enum_member: Style::CamelCase,
-    });
-
 }

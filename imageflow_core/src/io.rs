@@ -113,9 +113,42 @@ impl IoProxy {
     pub fn io_id(&self) -> i32{
         self.io_id
     }
+    pub fn try_get_length(&mut self) -> Option<u64>{
+        match &self.backend{
+            IoBackend::ReadVec(v) => Some(v.get_ref().len() as u64),
+            IoBackend::ReadSlice(v) => Some(v.get_ref().len() as u64),
+            IoBackend::ReadFile(v) => v.get_ref().metadata().map(|m| m.len()).ok(),
+            _ => None
+        }
+    }
+
+    pub fn try_get_position(&mut self) -> Option<u64>{
+        match &self.backend{
+            IoBackend::ReadVec(v) => Some(v.position()),
+            IoBackend::ReadSlice(v) => Some(v.position()),
+            IoBackend::ReadFile(v) => v.get_ref().stream_position().ok(),
+            _ => None
+        }
+    }
 
     pub fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>{
         self.backend.get_read().expect("cannot read from writer").read_exact(buf)
+    }
+
+    pub fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>{
+        self.backend.get_read().expect("cannot read from writer").read(buf)
+    }
+
+    pub fn read_maximally(&mut self, buf: &mut [u8]) -> std::io::Result<usize>{
+        let mut total_read = 0;
+        while total_read < buf.len(){
+            let read = self.read(&mut buf[total_read..])?;
+            if read == 0{
+                break;
+            }
+            total_read += read;
+        }
+        Ok(total_read)
     }
 
     pub fn read_file(context: &Context, filename: PathBuf, io_id: i32) -> Result<IoProxy> {

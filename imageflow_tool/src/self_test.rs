@@ -37,7 +37,7 @@ enum ReplacementInput{
 }
 impl ReplacementInput{
     pub fn prepare(&self, c: &ProcTestContext){
-        #[cfg_attr(feature = "cargo-clippy", allow(single_match))]
+        //#[cfg_attr(feature = "cargo-clippy", allow(single_match))]
         match *self{
             ReplacementInput::File{ref path, ref source} => {
                 let bytes = source.get_bytes();
@@ -90,15 +90,15 @@ enum OutputDestination{
 //    ImageMatches{dest: &'a ReplacementOutput, w: Option<u32>, h: Option<u32>, content_type: Option<&'static str>},
 //
 //}
-trait TestScenario{
-    fn description() -> &'static str;
-    fn slug() -> &'static str;
-
-}
-
-trait TestExpectations{
-
-}
+// trait TestScenario{
+//     fn description() -> &'static str;
+//     fn slug() -> &'static str;
+//
+// }
+//
+// trait TestExpectations{
+//
+// }
 
 struct BuildScenario{
     pub description: &'static str,
@@ -361,7 +361,7 @@ pub fn run(tool_location: Option<PathBuf>) -> i32 {
 
         c.exec("v1/build --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json").expect_exit_0_no_output("");
         // TODO: Verify out0.json exists and was created
-        c.exec("v1/build --bundle-to bundle_example_1 --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json").expect_status_code(Some(0));
+        c.exec("v1/build --bundle-to bundle_example_1a --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json").expect_status_code(Some(0));
         //TODO: verify bundle was created
         //TODO: test URL fetch
     }
@@ -376,17 +376,23 @@ pub fn run(tool_location: Option<PathBuf>) -> i32 {
 
         result.expect_status_code(Some(0));
 
-        let resp: s::Response001 = result.parse_stdout_as::<s::Response001>().unwrap();
-        match resp.data {
-            s::ResponsePayload::BuildResult(info) => {
-                println!("encodes: {:?}", &info.encodes);
-                assert!(info.encodes.len() >= 1);
-                let encode: &s::EncodeResult = &info.encodes[0];
-                assert_eq!(encode.w, 100);
-            }
-            _ => panic!("Build result not sent"),
-        }
+        let parse_result = result.parse_stdout_as::<s::Response001>();
 
+        match parse_result{
+            Err(e) => {
+                result.print_to_err();
+                panic!("Failed to parse with {:?}", e);
+            },
+            Ok(r) => match r.data {
+                s::ResponsePayload::BuildResult(info) => {
+                    println!("encodes: {:?}", &info.encodes);
+                    assert!(info.encodes.len() >= 1);
+                    let encode: &s::EncodeResult = &info.encodes[0];
+                    assert_eq!(encode.w, 100);
+                },
+                _ => panic!("Build result not sent")
+            }
+        }
     }
     {
         let recipe = fluent::fluently().decode(0).constrain_within(Some(60), Some(45), None).encode(1, s::EncoderPreset::libjpeg_turbo()).into_build_0_1();
@@ -601,10 +607,11 @@ pub fn test_capture(tool_location: Option<PathBuf>) -> i32 {
 
         c.exec("v1/build --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json").expect_exit_0_no_output("");
         // TODO: Verify out0.json exists and was created
-        c.exec("v1/build --bundle-to bundle_example_1 --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json").expect_status_code(Some(0));
+        c.exec("v1/build --bundle-to bundle_example_1b --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json").expect_status_code(Some(0));
         //TODO: verify bundle was created
         //TODO: test URL fetch
-        c.subfolder_context(Path::new("bundle_example_1")).exec("--capture-to recipe v1/build --json recipe.json --response response.json").dump().expect_status_code(Some(0));
+        c.subfolder_context(Path::new("bundle_example_1b"))
+                .exec("--capture-to recipe v1/build --json recipe.json --response response.json").print_to_err().expect_status_code(Some(0));
 
     }
     {
@@ -613,7 +620,8 @@ pub fn test_capture(tool_location: Option<PathBuf>) -> i32 {
         c.create_blank_image_here("200x200", 200, 200, s::EncoderPreset::libjpeg_turbo());
         c.create_blank_image_here("200x200", 200, 200, s::EncoderPreset::libpng32());
 
-        c.exec("v1/build --debug-package debug_example --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json").expect_status_code(Some(0));
+        c.exec("v1/build --debug-package debug_example --json example1.json --in 200x200.png 200x200.jpg --out out0.jpg --response out0.json")
+        .print_to_err().expect_status_code(Some(0));
     }
 
 

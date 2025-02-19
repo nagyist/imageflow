@@ -4,25 +4,28 @@ version = "0.1.0"
 authors = ["Lilith River <lilith@imazen.io>"]
 workspace = "../"
 build = "build.rs"
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "imageflow"
 doc = true
+# Default crate type for non-musl targets
 crate-type = ["cdylib"]
 doctest = false
+
+
 
 [dependencies]
 libc = "0.2"
 imageflow_core = { path = "../imageflow_core", version = "*"}
 backtrace = "*"
 smallvec="*"
-base64="0.13"
+base64="0.22"
 
 [build-dependencies]
 imageflow_helpers = { path = "../imageflow_helpers", version = "*"}
-cbindgen = "0.15"
-regex = "1"
-
+cbindgen = "0.28"
+regex-lite = { version = "0.1.6" }
+rayon = "1"
 [features]
 nightly = ["imageflow_core/nightly", "imageflow_helpers/nightly"]

@@ -3,7 +3,7 @@
 #![recursion_limit = "1024"]
 
 //hexadecimal colors aren't numbers
-#![cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
+//#![cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
 
 
 //
@@ -21,11 +21,19 @@
 //    }
 //}
 
+#[cfg(not(feature = "mimalloc"))]
 use std::alloc::System;
+#[cfg(not(feature = "mimalloc"))]
 
 #[global_allocator]
 static GLOBAL: System = System;
 
+#[cfg(feature = "mimalloc")]
+use mimalloc::MiMalloc;
+
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 //#[macro_use]
 //extern crate error_chain;
@@ -35,11 +43,10 @@ extern crate lazy_static;
 
 extern crate rand;
 
-extern crate regex;
+extern crate regex_lite;
 extern crate blake2_rfc;
 extern crate twox_hash;
 extern crate chrono;
-extern crate zip;
 //extern crate serde;
 //extern crate serde_json;
 extern crate backtrace;
@@ -51,8 +58,7 @@ extern crate unicase;
 extern crate time;
 extern crate uuid;
 extern crate smallvec;
-#[cfg(test)]
-extern crate mockito;
+
 
 extern crate digest;
 pub mod identifier_styles;

@@ -1,0 +1,4 @@
+---
+description: Run cargo fmt after making changes 
+globs: *.rs
+---

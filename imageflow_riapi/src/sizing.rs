@@ -21,6 +21,13 @@ pub mod prelude{
     pub use super::{AspectRatio, steps, BoxKind, LayoutError, PartialCropProvider, IdentityCropProvider, Cond, BoxParam, BoxTarget, Step, Step1D};
 }
 
+// auto convert a tuple to an AspectRatio
+impl From<(i32, i32)> for AspectRatio {
+    fn from(tuple: (i32, i32)) -> Self {
+        AspectRatio::create(tuple.0, tuple.1).unwrap()
+    }
+}
+
 impl AspectRatio {
     pub fn create(w: i32, h: i32) -> Result<AspectRatio> {
         if w < 1 || h < 1 {
@@ -54,25 +61,106 @@ impl AspectRatio {
 
     /// Using own ratio, calculate height for given width
     pub fn height_for(&self, w: i32, potential_rounding_target: Option<&AspectRatio>) -> Result<i32> {
-        AspectRatio::proportional(self.ratio_f64(), true, w, self.h, potential_rounding_target.map(|r| r.h).unwrap_or(self.h))
+        // We need to test the rounding target ratio to determine. 
+        AspectRatio::proportional(self, w, true, potential_rounding_target)
     }
     /// Using own ratio, calculate height for given width
+    /// The problem is that using the original image ratio, against the rounded value h, is a problem. 
+    /// Ex, 1200x400 is a perfect 3.0 ratio, but 100x33 is the target, and this produces 99x33
     pub fn width_for(&self, h: i32, potential_rounding_target: Option<&AspectRatio>) -> Result<i32> {
-        AspectRatio::proportional(self.ratio_f64(), false, h, self.w, potential_rounding_target.map(|r| r.w).unwrap_or(self.w))
+        AspectRatio::proportional(self, h, false, potential_rounding_target)
     }
 
-    pub fn proportional(ratio: f64, inverse: bool, basis: i32, snap_a: i32, snap_b: i32) -> Result<i32> {
-        let float = if inverse {
+    pub fn rounding_loss_based_on_target_width(&self, target_width: i32) -> f64 {
+        // Example: self is 1200x400, rounding_target_x is 100
+        // target_x_to_self_x = 100 / 1200 = 0.08333333333333333
+        // recreate_y = 400 * 0.08333333333333333 = 33.333333333333336
+        // rounded_y = 33.333333333333336.round() = 33
+        // recreate_x_from_rounded_y = 33 * 1200 / 400 = 99
+        // loss_x = 100 - 99 = 1
+        
+        let target_x_to_self_x = target_width as f64 / self.w as f64;
+        let recreate_y = self.h as f64 * target_x_to_self_x;
+        let rounded_y = recreate_y.round();
+        let recreate_x_from_rounded_y = rounded_y * self.ratio_f64();
+        let loss_x = (target_width  as f64 - recreate_x_from_rounded_y).abs();
+
+        // println!("rounding_loss_based_on_target_width: original {:?}, target_width: {:?}, loss_x=abs(round(round(({}/{})*{})*({}/{}))-{})=>{}", 
+        // self, target_width, target_width, self.w, self.h, self.w, self.h, target_width, loss_x);
+        loss_x
+    }
+
+    pub fn rounding_loss_based_on_target_height(&self, target_height: i32) -> f64 {
+        // Example: self is 1200x400, target_height is 33
+        // target_y_to_self_y = 33 / 400 = 0.0825
+        // recreate_x = 1200 * 0.0825 = 99
+        // rounded_x = 99.round() = 99
+        // recreate_y_from_rounded_x = 99 / (1200 / 400) = 33
+        // loss_y = 33 - 33 = 0
+        
+        let target_y_to_self_y = target_height as f64 / self.h as f64;
+        let recreate_x = self.w as f64 * target_y_to_self_y;
+        let rounded_x = recreate_x.round();
+        let recreate_y_from_rounded_x = rounded_x / self.ratio_f64();
+        let loss_y = (target_height as f64 - recreate_y_from_rounded_x).abs();
+        // println!("rounding_loss_using_target_y: self={:?}, target_y={:?}, loss_y=abs(round(round(({}/{})*{})/({}/{}))-{})=>{}", 
+        // self, target_height, target_height, self.h, self.w, self.w, self.h, target_height, loss_y);
+        loss_y
+    }
+
+    
+
+    /// Does not guarantee that the result will be within potential_rounding_target.
+    pub fn proportional(&self, basis: i32, basis_is_width: bool, potential_rounding_target: Option<&AspectRatio>) -> Result<i32> {
+        // This is more complex than originally thought. Snapping if the difference is less than 1 is not enough.
+        // We need to reverse engineer how much loss was incurred when creating 'basis'
+        // For example, given a basis of 33, and a ration of 1200/400=3.0, we would produce 99
+        // So, if potential_rounding_target exists, we should determine if it matches 
+
+        //eprintln!("proportional: self: {:?} basis: {:?} basis_is_width: {:?} potential_rounding_target: {:?}", self, basis, basis_is_width, potential_rounding_target);
+        let mut snap_amount = 1f64 - f64::EPSILON;
+        if potential_rounding_target.is_some() {
+            if !basis_is_width {
+                let loss_x = self.rounding_loss_based_on_target_width(potential_rounding_target.unwrap().w);
+                snap_amount = loss_x;
+            } else {
+                let loss_y = self.rounding_loss_based_on_target_height(potential_rounding_target.unwrap().h);
+                snap_amount = loss_y;
+            }
+        }
+    
+        // full precision
+        let ratio = self.ratio_f64();
+        let snap_a = if basis_is_width { self.h } else { self.w };
+        let snap_b = if potential_rounding_target.is_some() {
+            if basis_is_width {
+                potential_rounding_target.unwrap().h
+            } else {
+                potential_rounding_target.unwrap().w
+            }
+        } else {
+            snap_a
+        };
+        
+
+        let float = if basis_is_width 
+        {
             f64::from(basis) / ratio
         } else {
             ratio * f64::from(basis)
         };
 
-        if (float - f64::from(snap_a)).abs() < 1f64 {
+        let delta_a = float - f64::from(snap_a);
+        let delta_b = float - f64::from(snap_b);
+
+        
+        
+        let result = if delta_a.abs() <= snap_amount && delta_a.abs() <= delta_b.abs() {
             Ok(snap_a)
-        } else if (float - f64::from(snap_b)).abs() < 1f64 {
+        } else if delta_b.abs() <= snap_amount{
             Ok(snap_b)
         } else {
+            
             let rounded = float.round();
             // We replace 0 with 1.
             if rounded <= f64::from(std::i32::MIN) || rounded >= f64::from(std::i32::MAX) {
@@ -96,13 +184,12 @@ impl AspectRatio {
             } else {
                 Ok(v)
             }
-        )
-
-//        if let Err(ref e) = res {
-//            panic!("{:?} during proportional({},{},{},{},{})", e, ratio, inverse, basis, snap_a, snap_b);
-//        }
-//        res
+        );
+        // println!("proportional: self: {:?} ratio: {:?} basis: {:?} basis_is_width: {:?} target_snap: {:?} snap_amount: {:?} snap_a: {:?} snap_b: {:?} => {:?} => {:?}", 
+        //    self, self.ratio_f64(), basis, basis_is_width, potential_rounding_target, snap_amount, snap_a, snap_b, float, result);
+        result
     }
+
 
     /// Create a ibox (inner box) or obox (outer box) using own ratio, but other's min/max box.
 /// One dimension of the produced box will always match with `target`

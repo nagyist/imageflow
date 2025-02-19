@@ -9,6 +9,9 @@ use std::io::{Write, Read, BufWriter};
 use std::path::{Path};
 use std::process::{Command, Output};
 use std::collections::HashMap;
+use std::time::{Instant};
+extern crate rayon;
+use rayon::prelude::*;
 
 quick_error! {
     #[derive(Debug)]
@@ -46,9 +49,16 @@ fn run(cmd: &str) -> std::result::Result<String,Error> {
     }
     let exe = args.remove(0);
 
+    let start = Instant::now();
     let output: Output = Command::new(exe)
         .args(&args)
         .output()?;
+    let duration = start.elapsed();
+
+    if duration.as_millis() > 500 {
+        println!("Warning: command `{}` took {}ms to execute", cmd, duration.as_millis());
+    }
+
     if !output.status.success() {
         return Err(Error::CommandFailed(output));
     }
@@ -116,30 +126,31 @@ fn env_or_cmd(key: &str, cmd: &str) -> Option<String>{
 //    Path::new(&build_rs_path).parent().expect("Rust must be stripping parent directory info from file! macro. This breaks path stuff in build.rs.").to_owned()
 //}
 
-fn collect_info(shopping_list: Vec<EnvTidbit>) -> HashMap<String, Option<String>>{
+fn collect_info(shopping_list: Vec<EnvTidbit>) -> HashMap<String, Option<String>> {
+    let results: Vec<(String, Option<String>)> = shopping_list
+        .into_par_iter()
+        .map(|from| {
+            let (k, v) = match from {
+                EnvTidbit::Env(key) => (key, fetch_env(key, false, true)),
+                EnvTidbit::EnvReq(key) => (key, fetch_env(key, true, true)),
+                EnvTidbit::FileContentsReq { key, relative_to_build_rs } => {
+                    let io_error_expect = format!("Failed to read file {:?}. This file is required to be embedded in output binaries.", relative_to_build_rs);
+                    let mut file = File::open(relative_to_build_rs).expect(&io_error_expect);
+                    let mut contents = String::new();
+                    file.read_to_string(&mut contents).expect(&io_error_expect);
+                    (key, Some(contents))
+                },
+                EnvTidbit::Cmd { key, cmd } => (key, command(key, cmd, false, false)),
+                EnvTidbit::CmdReq { key, cmd } => (key, command(key, cmd, true, false)),
+                EnvTidbit::CmdOrEnvReq { key, cmd } => (key, command(key, cmd, true, true)),
+                EnvTidbit::CmdOrEnv { key, cmd } => (key, command(key, cmd, false, true)),
+                EnvTidbit::EnvOrCmdInconsistent { key, cmd } => (key, env_or_cmd(key, cmd)),
+            };
+            (k.to_owned(), v)
+        })
+        .collect();
 
-    let mut info = HashMap::new();
-    for from in shopping_list {
-        let (k,v) = match from {
-            EnvTidbit::Env(key) => (key, fetch_env(key, false, true)),
-            EnvTidbit::EnvReq(key) => (key, fetch_env(key, true, true)),
-            EnvTidbit::FileContentsReq{key, relative_to_build_rs} => {
-
-                let io_error_expect = format!("Failed to read file {:?}. This file is required to be embedded in output binaries.", relative_to_build_rs);
-                let mut file = File::open(relative_to_build_rs).expect(&io_error_expect);
-                let mut contents = String::new();
-                file.read_to_string( &mut contents).expect(&io_error_expect);
-                (key, Some(contents))
-            },
-            EnvTidbit::Cmd{key, cmd} => (key, command(key, cmd, false, false)),
-            EnvTidbit::CmdReq{key, cmd} => (key, command(key, cmd, true, false)),
-            EnvTidbit::CmdOrEnvReq{key, cmd} => (key, command(key, cmd, true, true)),
-            EnvTidbit::CmdOrEnv{key, cmd} => (key, command(key, cmd, false, true)),
-            EnvTidbit::EnvOrCmdInconsistent{key, cmd} => (key, env_or_cmd(key, cmd)),
-        };
-        info.insert(k.to_owned(),v);
-    }
-    info
+    results.into_iter().collect()
 }
 fn what_to_collect() -> Vec<EnvTidbit>{
     let mut c = Vec::new();
@@ -150,8 +161,8 @@ fn what_to_collect() -> Vec<EnvTidbit>{
     c.push(EnvTidbit::CmdOrEnv{key: "GIT_DESCRIBE_ALL", cmd: "git describe --always --all --long"});
     c.push(EnvTidbit::CmdOrEnv{key: "GIT_OPTIONAL_TAG", cmd: "git describe --exact-match --tags"});
     c.push(EnvTidbit::CmdOrEnv{key: "GIT_OPTIONAL_BRANCH", cmd: "git symbolic-ref --short HEAD"});
-    static ENV_VARS: [&'static str;21] = ["ESTIMATED_ARTIFACT_URL","ESTIMATED_DOCS_URL","CI_SEQUENTIAL_BUILD_NUMBER","CI_BUILD_URL","CI_JOB_URL","CI_JOB_TITLE","CI_STRING",
-        "CI_PULL_REQUEST_INFO", "CI_TAG", "CI_REPO", "CI_RELATED_BRANCH", "CI", "TARGET", "OUT_DIR", "HOST", "OPT_LEVEL", "DEBUG", "PROFILE", "RUSTC", "RUSTFLAGS","TARGET_CPU"
+    static ENV_VARS: [&'static str;22] = ["ESTIMATED_ARTIFACT_URL","ESTIMATED_DOCS_URL","CI_SEQUENTIAL_BUILD_NUMBER","CI_BUILD_URL","CI_JOB_URL","CI_JOB_TITLE","CI_STRING",
+        "CI_PULL_REQUEST_INFO", "CI_TAG", "CI_RELEASE", "CI_REPO", "CI_RELATED_BRANCH", "CI", "TARGET", "OUT_DIR", "HOST", "OPT_LEVEL", "DEBUG", "PROFILE", "RUSTC", "RUSTFLAGS","TARGET_CPU"
     ];
     for name in ENV_VARS.iter(){
         c.push(EnvTidbit::Env(name));
@@ -160,8 +171,12 @@ fn what_to_collect() -> Vec<EnvTidbit>{
     c.push(EnvTidbit::Cmd{key: "GIT_STATUS", cmd: "git status"});
     c.push(EnvTidbit::Cmd{key: "GLIBC_VERSION", cmd: "ldd --version"});
     c.push(EnvTidbit::Cmd{key: "UNAME", cmd: "uname -av"});
-    c.push(EnvTidbit::Cmd{key: "WIN_SYSTEMINFO", cmd: "systeminfo.exe"});
-    //TODO: ver?
+
+    // only if CI_RELEASE==true
+    if env::var("CI_RELEASE").unwrap_or("false".to_owned()).to_lowercase() == "true" {
+        c.push(EnvTidbit::Cmd{key: "WIN_SYSTEMINFO", cmd: "systeminfo.exe"}); // takes 3-9 seconds...
+    }
+
     c.push(EnvTidbit::Cmd{key: "DEFAULT_GCC_VERSION", cmd: "gcc -v"});
     c.push(EnvTidbit::Cmd{key: "DEFAULT_CLANG_VERSION", cmd: "clang --version"});
     c.push(EnvTidbit::CmdReq{key: "DEFAULT_RUSTC_VERSION", cmd: "rustc -V"});
